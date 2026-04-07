@@ -1,0 +1,183 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+import random
+
+# --- 1. Data Structures ---
+
+class Student:
+    def __init__(self, student_id, dept, roll_no, gender, risk_level):
+        self.student_id = student_id
+        self.dept = dept
+        self.roll_no = roll_no
+        self.gender = gender  # 'M' or 'F'
+        self.risk_level = risk_level  # 1: High Risk, 0: Low Risk
+
+    def __repr__(self):
+        return f"{self.dept}-{self.roll_no}"
+
+# --- 2. The AI Solver Engine ---
+
+class ExamHallCSP:
+    def __init__(self, rows, cols, students, blocked_seats=None):
+        self.rows = rows
+        self.cols = cols
+        self.students = students
+        self.grid = [[None for _ in range(cols)] for _ in range(rows)]
+        self.blocked_seats = blocked_seats if blocked_seats else []
+        
+        # Sort students: High risk first (Most Constrained Variable heuristic)
+        self.students.sort(key=lambda s: s.risk_level, reverse=True)
+
+    def is_monitored_seat(self, r, c):
+        """Front row or side edges."""
+        return r == 0 or c == 0 or c == self.cols - 1
+
+    def get_neighbors(self, r, c):
+        neighbors = []
+        for dr in [-1, 0, 1]:
+            for dc in [-1, 0, 1]:
+                if dr == 0 and dc == 0: continue
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < self.rows and 0 <= nc < self.cols:
+                    neighbors.append((nr, nc))
+        return neighbors
+
+    def satisfies_hard_constraints(self, student, r, c):
+        if (r, c) in self.blocked_seats: return False
+        
+        # Rule: High risk must be in monitored zones
+        if student.risk_level == 1 and not self.is_monitored_seat(r, c):
+            return False
+
+        neighbors = self.get_neighbors(r, c)
+        male_count = 0
+        
+        for nr, nc in neighbors:
+            other = self.grid[nr][nc]
+            if other:
+                # Rule: No same department adjacent
+                if other.dept == student.dept: return False
+                # Rule: No consecutive roll numbers adjacent
+                if abs(other.roll_no - student.roll_no) <= 1: return False
+                if other.gender == 'M': male_count += 1
+
+        # Rule: Gender safety (Female not surrounded by more than 3 males)
+        if student.gender == 'F' and male_count > 3: return False
+
+        return True
+
+    def calculate_heuristic(self, student, r, c):
+        """A* inspired cost: Lower score means better placement."""
+        penalty = 0
+        neighbors = self.get_neighbors(r, c)
+        for nr, nc in neighbors:
+            other = self.grid[nr][nc]
+            if other:
+                penalty += 5  # Penalize density to maximize distance
+        return penalty
+
+    def solve(self, student_idx=0):
+        if student_idx == len(self.students):
+            return True
+
+        student = self.students[student_idx]
+        possible_seats = []
+
+        for r in range(self.rows):
+            for c in range(self.cols):
+                if self.grid[r][c] is None and self.satisfies_hard_constraints(student, r, c):
+                    cost = self.calculate_heuristic(student, r, c)
+                    possible_seats.append((cost, r, c))
+
+        # Sort by heuristic cost (Soft constraint optimization)
+        possible_seats.sort()
+
+        for _, r, c in possible_seats:
+            self.grid[r][c] = student
+            if self.solve(student_idx + 1):
+                return True
+            self.grid[r][c] = None # Backtrack
+            
+        return False
+
+# --- 3. Visualization Function ---
+
+def visualize_seating(rows, cols, grid, blocked_seats):
+    fig, ax = plt.subplots(figsize=(12, 8))
+    
+    # Colors for departments
+    dept_colors = {'CS': '#3498db', 'ECE': '#2ecc71', 'ME': '#f1c40f', 'EE': '#9b59b6'}
+    
+    for r in range(rows):
+        for c in range(cols):
+            student = grid[r][c]
+            
+            # Default seat color
+            rect_color = 'white'
+            label = "Empty"
+            edge_color = 'gray'
+            linewidth = 1
+            
+            if (r, c) in blocked_seats:
+                rect_color = '#34495e' # Dark gray for blocked
+                label = "Blocked"
+            elif student:
+                rect_color = dept_colors.get(student.dept, '#ecf0f1')
+                label = f"{student.dept}\n{student.roll_no}\n({student.gender})"
+                # Highlight High Risk students with a thick red border
+                if student.risk_level == 1:
+                    edge_color = 'red'
+                    linewidth = 3
+            
+            rect = mpatches.Rectangle((c, rows-r-1), 1, 1, facecolor=rect_color, 
+                                      edgecolor=edge_color, linewidth=linewidth)
+            ax.add_patch(rect)
+            
+            # Add text
+            plt.text(c + 0.5, rows - r - 0.5, label, ha='center', va='center', 
+                     fontsize=8, fontweight='bold', color='black' if rect_color != '#34495e' else 'white')
+
+    # Formatting
+    plt.xlim(0, cols)
+    plt.ylim(0, rows)
+    plt.xticks(range(cols))
+    plt.yticks(range(rows))
+    plt.title("AI Exam Seating Arrangement (CSP + Heuristic Search)", fontsize=15)
+    
+    # Legend
+    legend_patches = [mpatches.Patch(color=v, label=k) for k, v in dept_colors.items()]
+    legend_patches.append(mpatches.Patch(facecolor='white', edgecolor='red', linewidth=2, label='High Risk Candidate'))
+    legend_patches.append(mpatches.Patch(color='#34495e', label='Blocked Seat'))
+    plt.legend(handles=legend_patches, bbox_to_anchor=(1.05, 1), loc='upper left')
+    
+    plt.tight_layout()
+    plt.show()
+
+# --- 4. Main Execution ---
+
+# Generate 50 Random Students
+random.seed(42)
+depts = ['CS', 'ECE', 'ME', 'EE']
+students_50 = []
+for i in range(1, 51):
+    students_50.append(Student(
+        student_id=i,
+        dept=random.choice(depts),
+        roll_no=100 + i,
+        gender=random.choice(['M', 'F']),
+        risk_level=1 if i % 12 == 0 else 0 # Every 12th student is high risk
+    ))
+
+# Grid setup: 9x7 = 63 seats (for 50 students to allow breathing room)
+rows, cols = 9, 7
+blocked = [(4, 3), (4, 4)] # Some broken seats in the middle
+
+csp = ExamHallCSP(rows, cols, students_50, blocked_seats=blocked)
+
+print("Calculating optimal arrangement for 50 students...")
+if csp.solve():
+    print("Success! Generating visualization...")
+    visualize_seating(rows, cols, csp.grid, blocked)
+else:
+    print("Failed to find a solution that satisfies all hard constraints.")
